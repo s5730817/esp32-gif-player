@@ -16,14 +16,9 @@
 #define TAG "ILI9340"
 #define	_DEBUG_ 0
 
-#if CONFIG_SPI2_HOST
-#define TFT_ID SPI2_HOST
-#elif CONFIG_SPI3_HOST
+/* Force display to VSPI (SPI3_HOST) to avoid SD card bus conflicts */
 #define TFT_ID SPI3_HOST
-#else
-#define TFT_ID SPI2_HOST // When not to use menuconfig
-#define XPT_ID SPI3_HOST // When not to use menuconfig
-#endif
+#define XPT_ID SPI3_HOST
 
 #define SPI_DEFAULT_FREQUENCY SPI_MASTER_FREQ_10M; // 10MHz
 
@@ -517,19 +512,27 @@ void lcdInit(TFT_t * dev, uint16_t model, int width, int height, int offsetx, in
 		gpio_set_level( dev->_bl, 1 );
 	}
 
-#if CONFIG_FRAME_BUFFER
+#if 1 // CONFIG_FRAME_BUFFER
 	ESP_LOGI(TAG, "MALLOC_CAP_DEFAULT: %d bytes", heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
 	ESP_LOGI(TAG, "MALLOC_CAP_INTERNAL: %d bytes", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 	ESP_LOGI(TAG, "MALLOC_CAP_SPIRAM: %d bytes", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 	ESP_LOGI(TAG, "Free heap size: %"PRIu32, esp_get_free_heap_size());
-	dev->_frame_buffer = heap_caps_malloc(sizeof(uint16_t)*width*height, MALLOC_CAP_DEFAULT);
-	if (dev->_frame_buffer == NULL) {
-		ESP_LOGE(TAG, "heap_caps_malloc fail. Frame buffer is not available.");
-	} else {
-		ESP_LOGI(TAG, "heap_caps_malloc success. Frame buffer is available.");
-		dev->_use_frame_buffer = true;
-	}
 #endif
+	if (dev->_use_frame_buffer) {
+		if (dev->_frame_buffer) {
+			ESP_LOGI(TAG, "Using preallocated frame buffer at %p", dev->_frame_buffer);
+		} else {
+			ESP_LOGI(TAG, "Largest free block INTERNAL: %d", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+			ESP_LOGI(TAG, "Allocating frame buffer: %d bytes", sizeof(uint16_t)*width*height);
+			dev->_frame_buffer = heap_caps_malloc(sizeof(uint16_t)*width*height, MALLOC_CAP_INTERNAL);
+			if (dev->_frame_buffer == NULL) {
+				ESP_LOGE(TAG, "heap_caps_malloc fail. Frame buffer is not available.");
+				dev->_use_frame_buffer = false;
+			} else {
+				ESP_LOGI(TAG, "heap_caps_malloc success. Frame buffer is available.");
+			}
+		}
+	}
 
 }
 
@@ -800,7 +803,10 @@ void lcdBGRFilter(TFT_t * dev) {
 // Fill screen
 // color:color
 void lcdFillScreen(TFT_t * dev, uint16_t color) {
-	lcdDrawFillRect(dev, 0, 0, dev->_width-1, dev->_height-1, color);
+	// draw a rectangle covering the entire panel; previous implementation
+	// started at 120,120 which is off‑screen for a 160×120 display and
+	// therefore drew nothing. clamp to full dimensions.
+	lcdDrawFillRect(dev, 0, 0, dev->_width - 1, dev->_height - 1, color);
 }
 
 // Draw line
