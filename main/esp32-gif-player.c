@@ -72,9 +72,8 @@ uint16_t rgb888_to_bgr565(uint8_t r, uint8_t g, uint8_t b) {
     return (b5 << 11) | (g6 << 5) | r5;  // Blue in high bits, Red in low bits
 }   
 
-void gif_stream_to_display(const char *path)
+void gif_stream_to_display(gd_GIF *gif)
 {
-	gd_GIF *gif = gd_open_gif(path);
 	ESP_LOGI("MEM", "Free heap before decoding: %d", (int)esp_get_free_heap_size());
 	if (!gif)
 	{
@@ -88,6 +87,8 @@ void gif_stream_to_display(const char *path)
 	int draw_h = (gif->width < TFT_HEIGHT) ? gif->width : TFT_HEIGHT;
 	ESP_LOGI("GIF", "Drawing 90deg rotated %dx%d from %dx%d GIF", draw_w, draw_h, gif->width, gif->height);
 
+	uint8_t frame_num = 0;
+
 	while (gd_get_frame(gif))
 	{
 		if (!gif->frame)
@@ -96,6 +97,7 @@ void gif_stream_to_display(const char *path)
 			break;
 		}
 
+		ESP_LOGI(TAG, "Frame %i", frame_num);
 		static uint16_t line[TFT_WIDTH];
 		for (int y = 0; y < draw_h; ++y)
 		{
@@ -125,10 +127,9 @@ void gif_stream_to_display(const char *path)
 				lcdDrawMultiPixels(&dev, 0, y, TFT_WIDTH, line);
 			}
 		}
-
+		frame_num++;
 		vTaskDelay(pdMS_TO_TICKS(6));
 	}
-	gd_close_gif(gif);
 }
 
 void sdcard_init(void)
@@ -427,6 +428,13 @@ void app_main(void)
 
 	ESP_LOGI(TAG, "After display init, largest free INTERNAL: %d", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
+	gd_GIF *gif = gd_open_gif("/sdcard/uploaded.gif");
+
 	ESP_LOGI(TAG, "Playing GIF from SD card...");
-	gif_stream_to_display("/sdcard/uploaded.gif");
+	while (true) {
+		gif_stream_to_display(gif);
+		ESP_LOGI(TAG, "Rewinding...");
+		gd_rewind(gif);
+	}
+	
 }
