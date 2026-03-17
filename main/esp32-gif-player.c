@@ -31,8 +31,6 @@ static TFT_t dev;
 #define TFT_WIDTH 240
 #define TFT_HEIGHT 320
 
-static uint16_t frame_buffer[TFT_WIDTH * TFT_HEIGHT];
-
 #define XPT_MISO 39
 #define XPT_CS 33
 #define XPT_IRQ 36
@@ -100,30 +98,48 @@ void gif_stream_to_display(gd_GIF *gif)
 
 		ESP_LOGI(TAG, "Frame %i", frame_num);
 		static uint16_t line[TFT_WIDTH];
-		for (int y = 0; y < draw_h; ++y)
-		{
-			for (int x = 0; x < draw_w; ++x)
-			{
-				int src_x = y;
-				int src_y = gif->height - 1 - x;
-				uint16_t color = 0xFFFF;
-				if (src_x >= 0 && src_x < gif->width && src_y >= 0 && src_y < gif->height)
-				{
-					uint8_t idx = gif->frame[src_y * gif->width + src_x];
-					if (gif->palette && idx < gif->palette->size)
-					{
-						uint8_t *rgb = &gif->palette->colors[idx * 3];
-						color = rgb888_to_bgr565(rgb[0], rgb[1], rgb[2]);
-					}
-				}
-				line[x] = color;
-			}
-			lcdDrawMultiPixels(&dev, 0, y, draw_w, line);
+		int chunk_h = draw_h / 6;
+		if (chunk_h < 1) chunk_h = 1;
+		uint16_t *chunk_buf = malloc(sizeof(uint16_t) * draw_w * chunk_h);
+		if (!chunk_buf) {
+			ESP_LOGE(TAG, "Out of memory for chunk buffer");
+			break;
 		}
+		for (int y0 = 0; y0 < draw_h; y0 += chunk_h)
+		{
+			int this_h = (y0 + chunk_h > draw_h) ? (draw_h - y0) : chunk_h;
+			for (int yy = 0; yy < this_h; yy++)
+			{
+				int dest_y = y0 + yy;
+				for (int x = 0; x < draw_w; x++)
+				{
+					int src_x = dest_y;
+					int src_y = gif->height - 1 - x;
+					uint16_t color = 0xFFFF;
+					if (src_x < gif->width && src_y >= 0 && src_y < gif->height)
+					{
+						uint8_t idx = gif->frame[src_y * gif->width + src_x];
+						if (gif->palette && idx < gif->palette->size)
+						{
+							uint8_t *rgb = &gif->palette->colors[idx * 3];
+							color = rgb888_to_bgr565(rgb[0], rgb[1], rgb[2]);
+						}
+					}
+					chunk_buf[yy * draw_w + x] = color;
+				}
+				lcdDrawMultiPixels(&dev, 0, dest_y, draw_w, &chunk_buf[yy * draw_w]);
+				if (draw_w < TFT_WIDTH) {
+					for (int x = draw_w; x < TFT_WIDTH; x++) {
+						line[x] = 0;
+					}
+					lcdDrawMultiPixels(&dev, draw_w, dest_y, TFT_WIDTH - draw_w, &line[draw_w]);
+				}
+			}
+		}
+		free(chunk_buf);
 
 		if (draw_h < TFT_HEIGHT)
 		{
-			/* Clear the rest of the screen below the GIF */
 			for (int y = draw_h; y < TFT_HEIGHT; ++y)
 			{
 				for (int x = 0; x < TFT_WIDTH; ++x)
@@ -133,8 +149,19 @@ void gif_stream_to_display(gd_GIF *gif)
 				lcdDrawMultiPixels(&dev, 0, y, TFT_WIDTH, line);
 			}
 		}
+		if (draw_w < TFT_WIDTH)
+		{
+			for (int y = 0; y < draw_h; ++y)
+			{
+				for (int x = draw_w; x < TFT_WIDTH; ++x)
+				{
+					line[x] = 0;
+				}
+				lcdDrawMultiPixels(&dev, draw_w, y, TFT_WIDTH - draw_w, &line[draw_w]);
+			}
+		}
 		frame_num++;
-		vTaskDelay(pdMS_TO_TICKS(6));
+		vTaskDelay(pdMS_TO_TICKS(0));
 	}
 }
 
@@ -206,7 +233,6 @@ esp_err_t upload_post_handler(httpd_req_t *req)
 {
 	ESP_LOGI(TAG, "Upload started, content len=%d", req->content_len);
 
-	char filepath[FILE_PATH_MAX] = MOUNT_POINT "/uploaded.gif";
 	ESP_LOGI(TAG, "Received upload");
 
 	FILE *f = fopen("/sdcard/uploaded.gif", "w");
@@ -217,10 +243,8 @@ esp_err_t upload_post_handler(httpd_req_t *req)
 	}
 
 	char buf[SCRATCH_BUFSIZE];
-	int received;
 	int total_received = 0;
 	bool data_started = false;
-	int boundary_offset = 0;
 	const char *boundary_marker = "------";
 
 	while (1)
