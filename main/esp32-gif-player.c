@@ -44,7 +44,7 @@ static bool gif_uploaded = false;
 
 void ili9341_init(void)
 {
-	//dev._use_frame_buffer = true;
+	// dev._use_frame_buffer = true;
 	spi_master_init(
 		&dev,
 		TFT_MOSI,
@@ -65,12 +65,13 @@ void ili9341_init(void)
 	ESP_LOGI(TAG, "Frame buffer status after init: %d", dev._use_frame_buffer);
 }
 
-uint16_t rgb888_to_bgr565(uint8_t r, uint8_t g, uint8_t b) {
-    uint16_t r5 = (r >> 3) & 0x1F;
-    uint16_t g6 = (g >> 2) & 0x3F;
-    uint16_t b5 = (b >> 3) & 0x1F;
-    return (b5 << 11) | (g6 << 5) | r5;  // Blue in high bits, Red in low bits
-}   
+uint16_t rgb888_to_bgr565(uint8_t r, uint8_t g, uint8_t b)
+{
+	uint16_t r5 = (r >> 3) & 0x1F;
+	uint16_t g6 = (g >> 2) & 0x3F;
+	uint16_t b5 = (b >> 3) & 0x1F;
+	return (b5 << 11) | (g6 << 5) | r5; // Blue in high bits, Red in low bits
+}
 
 void gif_stream_to_display(gd_GIF *gif)
 {
@@ -106,9 +107,11 @@ void gif_stream_to_display(gd_GIF *gif)
 				int src_x = y;
 				int src_y = gif->height - 1 - x;
 				uint16_t color = 0xFFFF;
-				if (src_x >= 0 && src_x < gif->width && src_y >= 0 && src_y < gif->height) {
+				if (src_x >= 0 && src_x < gif->width && src_y >= 0 && src_y < gif->height)
+				{
 					uint8_t idx = gif->frame[src_y * gif->width + src_x];
-					if (gif->palette && idx < gif->palette->size) {
+					if (gif->palette && idx < gif->palette->size)
+					{
 						uint8_t *rgb = &gif->palette->colors[idx * 3];
 						color = rgb888_to_bgr565(rgb[0], rgb[1], rgb[2]);
 					}
@@ -118,10 +121,13 @@ void gif_stream_to_display(gd_GIF *gif)
 			lcdDrawMultiPixels(&dev, 0, y, draw_w, line);
 		}
 
-		if (draw_h < TFT_HEIGHT) {
+		if (draw_h < TFT_HEIGHT)
+		{
 			/* Clear the rest of the screen below the GIF */
-			for (int y = draw_h; y < TFT_HEIGHT; ++y) {
-				for (int x = 0; x < TFT_WIDTH; ++x) {
+			for (int y = draw_h; y < TFT_HEIGHT; ++y)
+			{
+				for (int x = 0; x < TFT_WIDTH; ++x)
+				{
 					line[x] = 0;
 				}
 				lcdDrawMultiPixels(&dev, 0, y, TFT_WIDTH, line);
@@ -259,8 +265,16 @@ esp_err_t upload_post_handler(httpd_req_t *req)
 
 	gif_uploaded = true;
 
-	// Stop webserver and WiFi to free memory
-	httpd_stop(server);
+	// Save state: uploaded -> go display mode next boot
+	nvs_handle_t state_handle;
+	esp_err_t nvs_err = nvs_open("storage", NVS_READWRITE, &state_handle);
+	if (nvs_err == ESP_OK)
+	{
+		nvs_set_i8(state_handle, "is_upload_state", 0);
+		nvs_commit(state_handle);
+		nvs_close(state_handle);
+	}
+
 	esp_wifi_stop();
 
 	httpd_resp_sendstr(req,
@@ -268,28 +282,6 @@ esp_err_t upload_post_handler(httpd_req_t *req)
 
 	return ESP_OK;
 }
-/*
-while (total_received < req->content_len) {
-	ESP_LOGI(TAG, "RECEIVED %d out of %d", total_received, req->content_len);
-	//ESP_LOGI(TAG, "Received: %d", received);
-	received = httpd_req_recv(req, buf, sizeof(buf));
-	fwrite(buf, 1, received, f);
-	total_received += received;
-}
-
-if (total_received <= 0) {
-	ESP_LOGE(TAG, "File upload failed!");
-	httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive file");
-	return ESP_FAIL;
-}
-
-fclose(f);
-ESP_LOGI(TAG, "File uploaded: %d bytes written", total_received);
-
-httpd_resp_sendstr(req,
-"<html><body><h1>Upload complete!</h1><p>File saved to SD card</p><body></html>");
-return ESP_OK;}
-*/
 
 void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
@@ -342,6 +334,27 @@ void webserver_start(void)
 
 void wifi_softap_init(void)
 {
+	ESP_ERROR_CHECK(esp_netif_init());
+
+	ESP_ERROR_CHECK(esp_event_loop_create_default());
+	esp_event_handler_instance_t instance_any_id;
+	esp_event_handler_instance_t instance_got_ip;
+
+	ESP_ERROR_CHECK(
+		esp_event_handler_instance_register(
+			WIFI_EVENT,
+			ESP_EVENT_ANY_ID,
+			&event_handler,
+			NULL,
+			&instance_any_id));
+	ESP_ERROR_CHECK(
+		esp_event_handler_instance_register(
+			IP_EVENT,
+			IP_EVENT_STA_GOT_IP,
+			&event_handler,
+			NULL,
+			&instance_got_ip));
+
 	ESP_LOGI(TAG, "Wifi softap init");
 
 	esp_netif_create_default_wifi_ap();
@@ -351,8 +364,8 @@ void wifi_softap_init(void)
 
 	wifi_config_t wifi_config = {
 		.ap = {
-			.ssid = "ESP_GIF_PLAYER",
-			.ssid_len = strlen("ESP_GIF_PLAYER"),
+			.ssid = "ESP_GP",
+			.ssid_len = strlen("ESP_GP"),
 			.channel = 1,
 			.password = "coolPASSWORD12",
 			.max_connection = 2,
@@ -371,37 +384,6 @@ void wifi_softap_init(void)
 			 wifi_config.ap.ssid, wifi_config.ap.password);
 }
 
-void fb_test_task(TFT_t *arg)
-{
-	TFT_t *d = &dev; // your global dev
-	ESP_LOGI(TAG, "TFT size: %dx%d", d->_width, d->_height);
-	size_t pixels = (size_t)d->_width * d->_height;
-	ESP_LOGI(TAG, "fb ptr=%p pixels=%u bytes=%u", d->_frame_buffer, (unsigned)pixels, (unsigned)(pixels * sizeof(uint16_t)));
-
-	// Fill with gradient
-	for (int y = 0; y < d->_height; ++y)
-	{
-		for (int x = 0; x < d->_width; ++x)
-		{
-			size_t idx = (size_t)y * d->_width + x;
-			if (idx < pixels)
-			{
-				// simple color pattern
-				d->_frame_buffer[idx] = ((x & 0x1F) << 11) | ((y & 0x3F) << 5) | ((x + y) & 0x1F);
-			}
-			else
-			{
-				// won't happen with correct indexing
-			}
-		}
-	}
-
-	ESP_LOGI(TAG, "About to flush...");
-	lcdDrawFinish(d);
-	ESP_LOGI(TAG, "Flush done.");
-	vTaskDelete(NULL);
-}
-
 void app_main(void)
 {
 	// NVS INIT
@@ -413,28 +395,77 @@ void app_main(void)
 	}
 	ESP_ERROR_CHECK(ret);
 
+	nvs_handle_t state_handle;
+	int8_t is_upload_state = 1;
+	esp_err_t err = nvs_open("storage", NVS_READWRITE, &state_handle);
+	if (err != ESP_OK)
+	{
+		ESP_LOGE(TAG, "NVS open failed: %d", err);
+		is_upload_state = 1;
+	}
+	else
+	{
+		err = nvs_get_i8(state_handle, "is_upload_state", &is_upload_state);
+		if (err == ESP_ERR_NVS_NOT_FOUND)
+		{
+			ESP_LOGI(TAG, "is_upload_state not found in NVS, defaulting to upload mode");
+			is_upload_state = 1;
+		}
+		else if (err != ESP_OK)
+		{
+			ESP_LOGE(TAG, "Could not read is_upload_state: %d", err);
+			is_upload_state = 1;
+		}
+	}
+	ESP_LOGI(TAG, "Loaded is_upload_state=%d", is_upload_state);
+
+	// Toggle for next boot: alternate every reboot
+	if (state_handle != 0)
+	{
+		int8_t next_state = is_upload_state ? 0 : 1;
+		nvs_set_i8(state_handle, "is_upload_state", next_state);
+		nvs_commit(state_handle);
+		ESP_LOGI(TAG, "Set is_upload_state for next boot=%d", next_state);
+	}
+
 	// Mount SD card
 	sdcard_init();
 
 	ESP_LOGI(TAG, "Before display init, largest free INTERNAL: %d", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
-	// Provide a static buffer to avoid heap fragmentation issues
-	// Ensure we render directly via SPI (avoids needing a large contiguous frame buffer)
-	dev._use_frame_buffer = false;
-
-	ESP_LOGI(TAG, "Initializing display...");
-	ili9341_init();
-	ESP_LOGI(TAG, "Display initialized, frame buffer: %d", dev._use_frame_buffer);
-
-	ESP_LOGI(TAG, "After display init, largest free INTERNAL: %d", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-
-	gd_GIF *gif = gd_open_gif("/sdcard/uploaded.gif");
-
-	ESP_LOGI(TAG, "Playing GIF from SD card...");
-	while (true) {
-		gif_stream_to_display(gif);
-		ESP_LOGI(TAG, "Rewinding...");
-		gd_rewind(gif);
+	if (is_upload_state)
+	{
+		ESP_LOGI(TAG, "Upload mode: starting SoftAP and webserver");
+		nvs_close(state_handle);
+		wifi_softap_init();
+		webserver_start();
 	}
-	
+	else
+	{
+		ESP_LOGI(TAG, "Display mode: playing GIF");
+		nvs_close(state_handle);
+		// Provide a static buffer to avoid heap fragmentation issues
+		// Ensure we render directly via SPI (avoids needing a large contiguous frame buffer)
+		dev._use_frame_buffer = false;
+
+		ESP_LOGI(TAG, "Initializing display...");
+		ili9341_init();
+		ESP_LOGI(TAG, "Display initialized, frame buffer: %d", dev._use_frame_buffer);
+
+		ESP_LOGI(TAG, "After display init, largest free INTERNAL: %d", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+		gd_GIF *gif = gd_open_gif("/sdcard/uploaded.gif");
+
+		ESP_LOGI(TAG, "Playing GIF from SD card...");
+
+		while (true)
+		{
+			gif_stream_to_display(gif);
+			ESP_LOGI(TAG, "Rewinding...");
+			if (gif == NULL) {
+				break;
+			}
+			gd_rewind(gif);
+		}
+	}
 }
